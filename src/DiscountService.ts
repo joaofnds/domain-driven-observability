@@ -1,6 +1,6 @@
 import { Discount } from "./Discount";
 
-class DiscountNotFoundError extends Error {}
+export class DiscountNotFoundError extends Error {}
 
 export class DiscountService {
   private readonly discounts = [

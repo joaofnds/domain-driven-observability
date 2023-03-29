@@ -1,27 +1,73 @@
-import { DiscountService } from "./DiscountService";
+import { DiscountNotFoundError, DiscountService } from "./DiscountService";
+import { Analytics } from "./instrumentation/Analytics";
+import { Logger } from "./instrumentation/Logger";
+import { Metrics } from "./instrumentation/Metrics";
 import { Product } from "./Product";
 import { ShoppingCart } from "./ShoppingCart";
 
 describe(ShoppingCart, () => {
   const kinderBueno = new Product("Kinder Bueno", 1_00);
   const iPhone = new Product("iPhone", 1_000_00);
+
   const discountService = new DiscountService();
+  const logger: Logger = { log: jest.fn(), error: jest.fn() };
+  const metrics: Metrics = { gauge: jest.fn(), increment: jest.fn() };
+  const analytics: Analytics = { track: jest.fn() };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  const newShoppingCart = () =>
+    new ShoppingCart(discountService, logger, metrics, analytics);
 
   describe("subtotal", () => {
-    it("starts as 0", () => {
-      const cart = new ShoppingCart(discountService);
+    it("is 0 when empty", () => {
+      const cart = newShoppingCart();
       expect(cart.subtotal()).toBe(0);
     });
 
     describe("adding a product", () => {
       it("increases subtotal by product.value", () => {
-        const cart = new ShoppingCart(discountService);
+        const cart = newShoppingCart();
 
         cart.add(kinderBueno);
         cart.add(kinderBueno);
         cart.add(iPhone);
 
         expect(cart.subtotal()).toBe(kinderBueno.value * 2 + iPhone.value);
+      });
+
+      it("logs", () => {
+        const cart = newShoppingCart();
+        cart.add(iPhone);
+        expect(logger.log).toHaveBeenCalledWith(
+          `adding product '${iPhone.name}' to cart '${cart.id}'`
+        );
+      });
+
+      it("tracks", () => {
+        const cart = newShoppingCart();
+        cart.add(iPhone);
+        expect(analytics.track).toHaveBeenCalledWith("Product Added To Cart", {
+          id: iPhone.id,
+        });
+      });
+
+      it("emits metrics", () => {
+        const cart = newShoppingCart();
+        cart.add(iPhone);
+
+        expect(metrics.gauge).toHaveBeenNthCalledWith(
+          1,
+          "shopping-cart-total",
+          iPhone.value
+        );
+        expect(metrics.gauge).toHaveBeenNthCalledWith(
+          2,
+          "shopping-cart-size",
+          1
+        );
       });
     });
   });
@@ -30,8 +76,40 @@ describe(ShoppingCart, () => {
     let cart: ShoppingCart;
 
     beforeEach(() => {
-      cart = new ShoppingCart(discountService);
+      cart = newShoppingCart();
       cart.add(iPhone);
+    });
+
+    it("logs the discount", () => {
+      cart.applyDiscountCode("10");
+      expect(logger.log).toHaveBeenCalledWith(
+        "attempting to apply discount code: 10"
+      );
+    });
+
+    describe("when applied", () => {
+      it("logs", () => {
+        const discount = cart.applyDiscountCode("10");
+        expect(logger.log).toHaveBeenCalledWith(
+          "Discount applied, of amount: " + discount
+        );
+      });
+
+      it("emits metrics", () => {
+        const discount = cart.applyDiscountCode("10");
+        expect(metrics.increment).toHaveBeenCalledWith(
+          "discount-lookup-success",
+          { code: "10" }
+        );
+      });
+
+      it("tracks", () => {
+        const discount = cart.applyDiscountCode("10");
+        expect(analytics.track).toHaveBeenCalledWith("Discount Code Applied", {
+          code: "10",
+          amountDiscounted: discount,
+        });
+      });
     });
 
     describe("when code is '10'", () => {
@@ -64,6 +142,14 @@ describe(ShoppingCart, () => {
       it("does not decrease total", () => {
         cart.applyDiscountCode("does not exist");
         expect(cart.total()).toEqual(1_000_00);
+      });
+
+      it("logs", () => {
+        cart.applyDiscountCode("does not exist");
+        expect(logger.error).toHaveBeenCalledWith(
+          "discount lookup failed",
+          expect.any(DiscountNotFoundError)
+        );
       });
     });
   });
