@@ -42,24 +42,41 @@ export class ShoppingCart {
   }
 
   applyDiscountCode(discountCode) {
-    this.logger.log(`attempting to apply discount code: ${discountCode}`);
+    this.instrumentApplyingDiscountCode(discountCode);
 
     let discount;
     try {
       discount = this.discountService.lookupDiscount(discountCode);
     } catch (error) {
-      this.logger.error("discount lookup failed", error);
-      this.metrics.increment("discount-lookup-failure", { code: discountCode });
+      this.instrumentDiscountCodeLookupFailed(discountCode, error);
       return 0;
     }
-    this.metrics.increment("discount-lookup-success", { code: discountCode });
+    this.instrumentDiscountCodeLookupSucceeded(discountCode);
 
     const amountDiscounted = discount.applyToCart(this);
+    this.instrumentDiscountApplied(discount, amountDiscounted);
+    return amountDiscounted;
+  }
+
+  private instrumentApplyingDiscountCode(discountCode) {
+    this.logger.log(`attempting to apply discount code: ${discountCode}`);
+  }
+
+  private instrumentDiscountCodeLookupFailed(discountCode, error) {
+    this.logger.error("discount lookup failed", error);
+    this.metrics.increment("discount-lookup-failure", { code: discountCode });
+  }
+
+  private instrumentDiscountCodeLookupSucceeded(discountCode) {
+    this.metrics.increment("discount-lookup-success", { code: discountCode });
+  }
+
+  private instrumentDiscountApplied(discount, amountDiscounted) {
     this.logger.log(`Discount applied, of amount: ${amountDiscounted}`);
     this.analytics.track("Discount Code Applied", {
       code: discount.code,
-      amountDiscounted,
+      discount: discount.amount,
+      amountDiscounted: amountDiscounted,
     });
-    return amountDiscounted;
   }
 }
