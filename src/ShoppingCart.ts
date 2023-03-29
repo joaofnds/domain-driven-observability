@@ -1,9 +1,6 @@
 import { randomUUID } from "crypto";
-import { Discount } from "./Discount";
 import { DiscountService } from "./DiscountService";
-import { Analytics } from "./instrumentation/Analytics";
-import { Logger } from "./instrumentation/Logger";
-import { Metrics } from "./instrumentation/Metrics";
+import { DiscountInstrumentation } from "./instrumentation/DiscountInstrumentation";
 import { Product } from "./Product";
 
 export class ShoppingCart {
@@ -14,23 +11,21 @@ export class ShoppingCart {
 
   constructor(
     private readonly discountService: DiscountService,
-    private readonly logger: Logger,
-    private readonly metrics: Metrics,
-    private readonly analytics: Analytics
+    private readonly instrumentation: DiscountInstrumentation
   ) {}
 
   add(product: Product) {
-    this.logger.log(`adding product '${product.name}' to cart '${this.id}'`);
-
+    this.instrumentation.addingProductToCart(this, product);
     this.products.push(product);
-
-    this.analytics.track("Product Added To Cart", { id: product.id });
-    this.metrics.gauge("shopping-cart-total", this.total());
-    this.metrics.gauge("shopping-cart-size", this.products.length);
+    this.instrumentation.addedProductToCart(this, product);
   }
 
   total(): number {
     return this.subtotal() - this.discount;
+  }
+
+  size(): number {
+    return this.products.length;
   }
 
   subtotal(): number {
@@ -42,41 +37,19 @@ export class ShoppingCart {
   }
 
   applyDiscountCode(discountCode) {
-    this.instrumentApplyingDiscountCode(discountCode);
+    this.instrumentation.applyingDiscountCode(discountCode);
 
     let discount;
     try {
       discount = this.discountService.lookupDiscount(discountCode);
     } catch (error) {
-      this.instrumentDiscountCodeLookupFailed(discountCode, error);
+      this.instrumentation.discountCodeLookupFailed(discountCode, error);
       return 0;
     }
-    this.instrumentDiscountCodeLookupSucceeded(discountCode);
+    this.instrumentation.discountCodeLookupSucceeded(discountCode);
 
     const amountDiscounted = discount.applyToCart(this);
-    this.instrumentDiscountApplied(discount, amountDiscounted);
+    this.instrumentation.discountApplied(discountCode, amountDiscounted);
     return amountDiscounted;
-  }
-
-  private instrumentApplyingDiscountCode(discountCode) {
-    this.logger.log(`attempting to apply discount code: ${discountCode}`);
-  }
-
-  private instrumentDiscountCodeLookupFailed(discountCode, error) {
-    this.logger.error("discount lookup failed", error);
-    this.metrics.increment("discount-lookup-failure", { code: discountCode });
-  }
-
-  private instrumentDiscountCodeLookupSucceeded(discountCode) {
-    this.metrics.increment("discount-lookup-success", { code: discountCode });
-  }
-
-  private instrumentDiscountApplied(discount, amountDiscounted) {
-    this.logger.log(`Discount applied, of amount: ${amountDiscounted}`);
-    this.analytics.track("Discount Code Applied", {
-      code: discount.code,
-      discount: discount.amount,
-      amountDiscounted: amountDiscounted,
-    });
   }
 }

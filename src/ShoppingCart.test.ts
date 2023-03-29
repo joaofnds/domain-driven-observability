@@ -1,5 +1,6 @@
 import { DiscountNotFoundError, DiscountService } from "./DiscountService";
 import { Analytics } from "./instrumentation/Analytics";
+import { DiscountInstrumentation } from "./instrumentation/DiscountInstrumentation";
 import { Logger } from "./instrumentation/Logger";
 import { Metrics } from "./instrumentation/Metrics";
 import { Product } from "./Product";
@@ -13,13 +14,18 @@ describe(ShoppingCart, () => {
   const logger: Logger = { log: jest.fn(), error: jest.fn() };
   const metrics: Metrics = { gauge: jest.fn(), increment: jest.fn() };
   const analytics: Analytics = { track: jest.fn() };
+  const instrumentation = new DiscountInstrumentation(
+    logger,
+    metrics,
+    analytics
+  );
 
   beforeEach(() => {
     jest.resetAllMocks();
   });
 
   const newShoppingCart = () =>
-    new ShoppingCart(discountService, logger, metrics, analytics);
+    new ShoppingCart(discountService, instrumentation);
 
   describe("subtotal", () => {
     it("is 0 when empty", () => {
