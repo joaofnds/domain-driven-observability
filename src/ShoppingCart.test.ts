@@ -1,8 +1,5 @@
 import { DiscountNotFoundError, DiscountService } from "./DiscountService";
-import { Analytics } from "./instrumentation/Analytics";
 import { DiscountInstrumentation } from "./instrumentation/DiscountInstrumentation";
-import { Logger } from "./instrumentation/Logger";
-import { Metrics } from "./instrumentation/Metrics";
 import { Product } from "./Product";
 import { ShoppingCart } from "./ShoppingCart";
 
@@ -11,14 +8,14 @@ describe(ShoppingCart, () => {
   const iPhone = new Product("iPhone", 1_000_00);
 
   const discountService = new DiscountService();
-  const logger: Logger = { log: jest.fn(), error: jest.fn() };
-  const metrics: Metrics = { gauge: jest.fn(), increment: jest.fn() };
-  const analytics: Analytics = { track: jest.fn() };
-  const instrumentation = new DiscountInstrumentation(
-    logger,
-    metrics,
-    analytics
-  );
+  const instrumentation = {
+    addingProductToCart: jest.fn(),
+    addedProductToCart: jest.fn(),
+    applyingDiscountCode: jest.fn(),
+    discountCodeLookupFailed: jest.fn(),
+    discountCodeLookupSucceeded: jest.fn(),
+    discountApplied: jest.fn(),
+  } as unknown as DiscountInstrumentation;
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -44,35 +41,18 @@ describe(ShoppingCart, () => {
         expect(cart.subtotal()).toBe(kinderBueno.value * 2 + iPhone.value);
       });
 
-      it("logs", () => {
+      it("reports", () => {
         const cart = newShoppingCart();
+
         cart.add(iPhone);
-        expect(logger.log).toHaveBeenCalledWith(
-          `adding product '${iPhone.name}' to cart '${cart.id}'`
+
+        expect(instrumentation.addingProductToCart).toHaveBeenCalledWith(
+          cart,
+          iPhone
         );
-      });
-
-      it("tracks", () => {
-        const cart = newShoppingCart();
-        cart.add(iPhone);
-        expect(analytics.track).toHaveBeenCalledWith("Product Added To Cart", {
-          id: iPhone.id,
-        });
-      });
-
-      it("emits metrics", () => {
-        const cart = newShoppingCart();
-        cart.add(iPhone);
-
-        expect(metrics.gauge).toHaveBeenNthCalledWith(
-          1,
-          "shopping-cart-total",
-          iPhone.value
-        );
-        expect(metrics.gauge).toHaveBeenNthCalledWith(
-          2,
-          "shopping-cart-size",
-          1
+        expect(instrumentation.addedProductToCart).toHaveBeenCalledWith(
+          cart,
+          iPhone
         );
       });
     });
@@ -86,35 +66,23 @@ describe(ShoppingCart, () => {
       cart.add(iPhone);
     });
 
-    it("logs the discount", () => {
+    it("reports attempt", () => {
       cart.applyDiscountCode("10");
-      expect(logger.log).toHaveBeenCalledWith(
-        "attempting to apply discount code: 10"
-      );
+      expect(instrumentation.applyingDiscountCode).toHaveBeenCalledWith("10");
     });
 
     describe("when applied", () => {
-      it("logs", () => {
+      it("reports discount", () => {
         const discount = cart.applyDiscountCode("10");
-        expect(logger.log).toHaveBeenCalledWith(
-          "Discount applied, of amount: " + discount
-        );
-      });
 
-      it("emits metrics", () => {
-        const discount = cart.applyDiscountCode("10");
-        expect(metrics.increment).toHaveBeenCalledWith(
-          "discount-lookup-success",
-          { code: "10" }
-        );
-      });
+        expect(
+          instrumentation.discountCodeLookupSucceeded
+        ).toHaveBeenCalledWith("10");
 
-      it("tracks", () => {
-        const discount = cart.applyDiscountCode("10");
-        expect(analytics.track).toHaveBeenCalledWith("Discount Code Applied", {
-          code: "10",
-          amountDiscounted: discount,
-        });
+        expect(instrumentation.discountApplied).toHaveBeenCalledWith(
+          "10",
+          discount
+        );
       });
     });
 
@@ -145,15 +113,18 @@ describe(ShoppingCart, () => {
         expect(cart.applyDiscountCode("does not exist")).toEqual(0);
       });
 
-      it("does not decrease total", () => {
+      it("does not change total", () => {
+        const totalBefore = cart.total();
+
         cart.applyDiscountCode("does not exist");
-        expect(cart.total()).toEqual(1_000_00);
+
+        expect(cart.total()).toEqual(totalBefore);
       });
 
-      it("logs", () => {
+      it("reports error", () => {
         cart.applyDiscountCode("does not exist");
-        expect(logger.error).toHaveBeenCalledWith(
-          "discount lookup failed",
+        expect(instrumentation.discountCodeLookupFailed).toHaveBeenCalledWith(
+          "does not exist",
           expect.any(DiscountNotFoundError)
         );
       });
